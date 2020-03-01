@@ -12,6 +12,7 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -42,8 +43,17 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 
+
 import android.widget.AbsoluteLayout;
 import android.view.ViewGroup.LayoutParams;
+
+import android.net.Uri;
+import android.Manifest;
+import android.os.Environment;
+import android.app.DownloadManager;
+import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 
 import android.webkit.WebViewClient;
 import android.webkit.WebView;
@@ -76,6 +86,12 @@ public class PythonActivity extends Activity {
     private Bundle mMetaData = null;
     private PowerManager.WakeLock mWakeLock = null;
 
+    private String sDownloadingMessage =  "downloading...";
+
+    public void setDownloadingMessage(String msg) {
+        sDownloadingMessage = msg;
+    }
+    
     public String getAppRoot() {
         String app_root =  getFilesDir().getAbsolutePath() + "/app";
         return app_root;
@@ -180,6 +196,33 @@ public class PythonActivity extends Activity {
                     return false;
                 }
             });
+        mWebView.setDownloadListener(new DownloadListener() {
+                @Override
+                public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+
+                    if(!checkCurrentPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)){
+                        requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE});
+                    }else {
+                        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+
+                        request.setMimeType(mimeType);
+                        String cookies = CookieManager.getInstance().getCookie(url);
+                        request.addRequestHeader("cookie", cookies);
+                        request.addRequestHeader("User-Agent", userAgent);
+                        request.setDescription(sDownloadingMessage);
+                        request.setTitle(URLUtil.guessFileName(url, contentDisposition, mimeType));
+                        request.allowScanningByMediaScanner();
+                        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, URLUtil.guessFileName(url, contentDisposition, mimeType));
+                        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                        assert dm != null;
+                        dm.enqueue(request);
+                        Toast.makeText(getApplicationContext(), sDownloadingMessage, Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+
+
         mLayout = new AbsoluteLayout(this);
         mLayout.addView(mWebView);
 
@@ -218,6 +261,40 @@ public class PythonActivity extends Activity {
         final Thread wvThread = new Thread(new WebViewLoaderMain(), "WvThread");
         wvThread.start();
 
+    }
+
+    public boolean checkCurrentPermission(String permission) {
+        if (android.os.Build.VERSION.SDK_INT < 23)
+            return true;
+
+        try {
+            java.lang.reflect.Method methodCheckPermission =
+                Activity.class.getMethod("checkSelfPermission", java.lang.String.class);
+            Object resultObj = methodCheckPermission.invoke(this, permission);
+            int result = Integer.parseInt(resultObj.toString());
+            if (result == PackageManager.PERMISSION_GRANTED) 
+                return true;
+        } catch (IllegalAccessException | NoSuchMethodException |
+                 InvocationTargetException e) {
+        }
+        return false;
+    }
+
+    public void requestPermissionsWithRequestCode(String[] permissions, int requestCode) {
+        if (android.os.Build.VERSION.SDK_INT < 23)
+            return;
+        try {
+            java.lang.reflect.Method methodRequestPermission =
+                Activity.class.getMethod("requestPermissions",
+                java.lang.String[].class, int.class);
+            methodRequestPermission.invoke(this, permissions, requestCode);
+        } catch (IllegalAccessException | NoSuchMethodException |
+                 InvocationTargetException e) {
+        }
+    }
+
+    public void requestPermissions(String[] permissions) {
+        requestPermissionsWithRequestCode(permissions, 1);
     }
 
     @Override
